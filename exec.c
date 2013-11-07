@@ -133,6 +133,39 @@ static void memory_map_init(void);
 static MemoryRegion io_mem_watch;
 #endif
 
+struct llist{
+  void *data;
+  struct llist *next;
+};
+
+static struct llist* llist_push(struct llist *l, void *data){
+  struct llist *new_el;
+  
+  new_el = g_malloc(sizeof(struct llist));
+  new_el->data = data;
+  new_el->next = l;
+  
+  return new_el;
+}
+
+static struct llist* llist_pop(void **data, struct llist *l){
+  struct llist *rv;
+  
+  if (l == NULL)
+    return NULL;
+  
+  *data = l->data;
+  rv = l->next;
+  
+  g_free(l);
+  
+  return rv;
+}
+
+struct llist *mmapped_files;
+
+
+
 #if !defined(CONFIG_USER_ONLY)
 
 static void phys_map_node_reserve(unsigned nodes)
@@ -902,6 +935,16 @@ static long gethugepagesize(const char *path)
     return fs.f_bsize;
 }
 
+static void unlink_mmapped_files(void){
+  char *filename;
+  
+  while(mmapped_files != NULL){
+    mmapped_files = llist_pop((void**)&filename, mmapped_files);
+    unlink(filename);
+    g_free(filename);
+  }
+}
+
 static void *file_ram_alloc(RAMBlock *block,
                             ram_addr_t memory,
                             const char *path)
@@ -915,6 +958,13 @@ static void *file_ram_alloc(RAMBlock *block,
     int flags;
 #endif
     unsigned long hpagesize;
+    static int run_once;
+    
+    if(!run_once){
+      mmapped_files = NULL;
+      atexit(unlink_mmapped_files);
+      run_once = 1;
+    }
 
     hpagesize = gethugepagesize(path);
     if (!hpagesize) {
@@ -947,8 +997,9 @@ static void *file_ram_alloc(RAMBlock *block,
         g_free(filename);
         return NULL;
     }
-    unlink(filename);
-    g_free(filename);
+    //unlink(filename);
+    //g_free(filename);
+    mmapped_files = llist_push(mmapped_files,(void*)filename);
 
     memory = (memory+hpagesize-1) & ~(hpagesize-1);
 
